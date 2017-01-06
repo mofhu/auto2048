@@ -4,17 +4,19 @@ import time
 import os
 import pprint
 
-def get_screen(debug=False):
+def get_screen(debug=False, max_block=2048):
     block_matrix = [[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0]]
-    im = pyautogui.screenshot(region=(200, 400, 1020, 1020))
+    im = pyautogui.screenshot(region=(200, 400, 1020, 1020))  # screenshot
     if debug:
         im.save("screen.png")
-    for image in os.listdir("images"):
+    for image in os.listdir("images"):  # match for blocks
         num = re.match("\d+", image)
         if not num:
             continue
         else:
             num = int(num.group())
+            if num > max_block * 2:
+                continue
         if debug:
             print(image)
         block = pyautogui.locateAll("images/"+image, im, grayscale=True)
@@ -92,14 +94,14 @@ def move_right_row(row, debug=True):
     if debug:
         print(row)
     row_del_0 = []
-    for i in row:
+    for i in row:  # copy non-zero blocks
         if i != 0:
             row_del_0.append(i)
     #print(row_del_0)
     row = row_del_0
     i = 0
     j = len(row_del_0) - 1
-    while i < j:
+    while i < j:  # combine blocks
         #print(i, j)
         if row[j] == row[j-1]:
             row[j-1] *= 2
@@ -109,7 +111,7 @@ def move_right_row(row, debug=True):
             j -= 1
     #print(i, j)
     #print(row_del_0)
-    for i in range(4 - len(row_del_0)):
+    for i in range(4 - len(row_del_0)):  # insert zeros
         row_del_0.insert(0,0)
     if debug:
         print(row)
@@ -175,18 +177,27 @@ def score_blocks(block, debug=False):
 
 def action(direction):
     """action in screen."""
-    pyautogui.click(520, 720)
+    pyautogui.click(520, 720)  # activate 2048 page
     pyautogui.press(direction)
+
+
+def find_max_block(block):
+    """find max block in table."""
+    block_1d = block[0] + block[1] + block[2] + block[3]
+    return max(block_1d)
 
 
 def main():
     i = 0  # profile
     pyautogui.PAUSE = 0
+    max_block = 2048
     while(True):
+        # print("max block is {}".format(max_block))
         time.sleep(0.3)
         t0 = time.time()
-        block = get_screen(debug=False)
+        block = get_screen(debug=False, max_block=max_block)
         pprint.pprint(block)
+        max_block = find_max_block(block)
         #t1 = time.time()
         #print(t1 - t0)
         best_direction = cal_move(block, debug=False)
@@ -196,7 +207,7 @@ def main():
         t1 = time.time()
         print(t1 - t0)
         i += 1  # profile
-        if i == 100:
+        if i == 20:
             break
     # action('left')
 #main()
