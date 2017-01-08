@@ -1,33 +1,120 @@
 import pyautogui
+import cv2
+import numpy as np
 import re
 import time
 import os
-import pprint
+from pprint import pprint
 
-def get_screen(debug=False, max_block=2048):
+
+def init_screen(debug=False):
+    """init screen."""
     block_matrix = [[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0]]
-    im = pyautogui.screenshot(region=(200, 400, 1020, 1020))  # screenshot
+
+    bricks = read_images()
+    # screenshot: note that window is not shifted by title image
+    im = pyautogui.screenshot(region=(200, 250, 1020, 1220))
+    img_screen = cv2.cvtColor(np.array(im), cv2.COLOR_RGB2GRAY)
+
+    # get title bar position
+    img_title = cv2.imread('images/title.png', 0)
+    res = cv2.matchTemplate(img_screen, img_title, cv2.TM_CCOEFF_NORMED)
+    threshold = 0.99
+    loc = np.where(res >= threshold)
+    for pt in zip(*loc[::-1]):
+        print("init of title bar: {}".format(pt))
+        pos_title_bar = pt
+
+    # init bricks
+    for i in range(4):
+        for j in range(4):
+            img_brick = get_brick_image(img_screen, pos_title_bar, i, j)
+            flag_find = False
+            for key in bricks:
+                res = cv2.matchTemplate(img_brick, bricks[key],
+                                        cv2.TM_CCOEFF_NORMED)
+                threshold = 0.99
+                loc = np.where(res >= threshold)
+                for pt in zip(*loc[::-1]):
+                    block_matrix[i][j]= key
+                    flag_find = True
+                if flag_find:
+                    break
     if debug:
-        im.save("screen.png")
+        print(block_matrix)
+    return block_matrix, pos_title_bar
+
+
+def get_screen(block_matrix, pos_title_bar, debug=False):
+    """Get new screen after move."""
+
+    bricks = read_images()
+    im = pyautogui.screenshot(region=(200, 250, 1020, 1220))  # screenshot
+    img_screen = cv2.cvtColor(np.array(im), cv2.COLOR_RGB2GRAY)
+
+    for i in range(4):
+        for j in range(4):
+            if block_matrix[i][j] != 0:
+                continue
+            img_brick = get_brick_image(img_screen, pos_title_bar, i, j)
+            flag_find = False
+            for key in bricks:
+                res = cv2.matchTemplate(img_brick, bricks[key],
+                                        cv2.TM_CCOEFF_NORMED)
+                threshold = 0.99
+                loc = np.where(res >= threshold)
+                for pt in zip(*loc[::-1]):
+                    # print("brick row {}, column {}, num {}".format(i, j, key))
+                    block_matrix[i][j]= key
+                    if key != 0:  # find non-zero brick, i.e. the new block
+                        return block_matrix
+                    else:
+                        flag_find = True
+                if flag_find:
+                    break
+    if debug:
+        print(block_matrix)
+
+    # if no new brick found, the game is over
+    return None
+
+
+def read_images(debug=False):
+    """Read known brick images."""
+
+    # use OrderedDict to search from low to high bricks
+    from collections import OrderedDict
+    bricks = {}
     for image in os.listdir("images"):  # match for blocks
         num = re.match("\d+", image)
         if not num:
             continue
         else:
             num = int(num.group())
-            if num > max_block * 2:
-                continue
+            bricks[num] = cv2.imread("images/{}.png".format(num), 0)
         if debug:
-            print(image)
-        block = pyautogui.locateAll("images/"+image, im, grayscale=True)
-        for pos in block:
-            if debug:
-                print(pos)
-            index = pos_to_shape(pos, debug=False)
-            block_matrix[index[1]][index[0]] = num
-    if debug:
-        print(block_matrix)
-    return block_matrix
+            cv2.imshow(str(num), bricks[num])
+            cv2.waitKey(0)
+    bricks = OrderedDict(sorted(bricks.items()))
+    return bricks
+
+
+def get_brick_image(img_screen, pos_title_bar, row, column):
+    """Get brick image using numpy slices."""
+
+    WIDTH_SHIFT = 218 + pos_title_bar[1]
+    HEIGHT_SHIFT = 20 + pos_title_bar[0]
+    WIDTH_BLOCK = 242
+    HEIGHT_BLOCK = 242
+
+    img_brick = img_screen[
+        WIDTH_SHIFT+WIDTH_BLOCK*row : WIDTH_SHIFT+WIDTH_BLOCK*(row+1),
+        HEIGHT_SHIFT+HEIGHT_BLOCK*column : HEIGHT_SHIFT+HEIGHT_BLOCK*(column+1)
+    ]
+
+    # cv2.imshow("brick row {}, column {}".format(row, column), img_brick)
+    # cv2.waitKey(0)
+    return img_brick
 
 
 def pos_to_shape(pos, debug=True):
@@ -45,7 +132,7 @@ def cal_move(block_matrix, debug=False):
     for direction in ['right','left','up','down']:
         moved_matrix = move(block_matrix, direction)
         if is_block_equal(block_matrix, moved_matrix):
-            continue
+            continue  # not valid move
         else:
             moved_score = score_blocks(moved_matrix, debug=False)
             if debug:
@@ -149,10 +236,10 @@ def is_block_equal(block1, block2):
 
 
 def score_blocks(block, debug=False):
-    """return status score."""
+    """Return status score."""
     score = 0
     SCORE_PER_BLOCK = 10
-    SCORE_PER_NOT_EQUAL = 2
+    SCORE_PER_NOT_EQUAL = 1
 
     for i in range(4):
         for j in range(4):
@@ -163,13 +250,13 @@ def score_blocks(block, debug=False):
             if i < 3 and block[i+1][j] != 0:
                 if block[i][j] == block[i+1][j]:
                     score -= SCORE_PER_NOT_EQUAL
-                if block[i][j] > block[i+1][j] * 2 or block[i][j] < block[i+1][j] / 2 :
-                    score += SCORE_PER_NOT_EQUAL / 2
+                if block[i][j] >= block[i+1][j] * 4 or block[i][j] <= block[i+1][j] / 4 :
+                    score += SCORE_PER_NOT_EQUAL * 2
             if j < 3 and block[i][j+1] != 0:
                 if block[i][j] == block[i][j+1]:
                     score -= SCORE_PER_NOT_EQUAL
-                if block[i][j] > block[i][j+1] * 2 or block[i][j] < block[i][j+1] / 2 :
-                    score -= SCORE_PER_NOT_EQUAL / 2
+                if block[i][j] >= block[i][j+1] * 4 or block[i][j] <= block[i][j+1] / 4 :
+                    score -= SCORE_PER_NOT_EQUAL * 2
     if debug:
         print(score)
     return score
@@ -181,39 +268,32 @@ def action(direction):
     pyautogui.press(direction)
 
 
-def find_max_block(block):
-    """find max block in table."""
-    block_1d = block[0] + block[1] + block[2] + block[3]
-    return max(block_1d)
-
-
 def main():
     i = 0  # profile
     pyautogui.PAUSE = 0
-    max_block = 2048
+    block, pos_title_bar = init_screen(debug=False)
     while(True):
-        # print("max block is {}".format(max_block))
-        time.sleep(0.3)
         t0 = time.time()
-        block = get_screen(debug=False, max_block=max_block)
-        pprint.pprint(block)
-        max_block = find_max_block(block)
-        #t1 = time.time()
-        #print(t1 - t0)
         best_direction = cal_move(block, debug=False)
         print("Best move is {}.".format(best_direction))
-        #time.sleep(1)
         action(best_direction)
+        i += 1
+        time.sleep(0.4)
+        block = move(block, best_direction)  # calculate block after move
+        block = get_screen(block, pos_title_bar, debug=False)
+        if block == None:
+            print("Game over")
+            return
         t1 = time.time()
-        print(t1 - t0)
-        i += 1  # profile
-        if i == 20:
-            break
+        print("move {}, time {:.2f}".format(i, t1 - t0 - 0.4))
     # action('left')
-#main()
+main()
+
+
+"""
 import cProfile
 cProfile.run('main()', 'restats')  # 把 cProfile 的结果输出
-
 import pstats
 p = pstats.Stats('restats')  # pstats 读取输出的结果
 p.sort_stats('cumulative').print_stats(20)  # 按照 cumtime 排序, print_stats(n) 则显示前 n 行
+"""
